@@ -905,14 +905,14 @@ class InputFeatures(object):
 
 def read_nq_examples(input_file, is_training):
   """Read a NQ json file into a list of NqExample."""
-  input_paths = tf.gfile.Glob(input_file)
+  input_paths = tf.io.gfile.glob(input_file)
   input_data = []
 
   def _open(path):
     if path.endswith(".gz"):
       return gzip.GzipFile(fileobj=tf.gfile.Open(path, "r"))
     else:
-      return tf.gfile.Open(path, "r")
+      return open(path, "r")
 
   for path in input_paths:
     logging.info("Reading: %s", path)
@@ -1116,39 +1116,32 @@ def input_fn_builder(input_file, seq_length, is_training, drop_remainder,
     name_to_features["end_positions"] = tf.io.FixedLenFeature([], tf.int64)
     name_to_features["answer_types"] = tf.io.FixedLenFeature([], tf.int64)
 
-  def _decode_record(record, name_to_features):
-    """Decodes a record to a TensorFlow example."""
-    example = tf.io.parse_single_example(record, name_to_features)
+  def _decode_record(record, name_to_features=name_to_features):
+      example = tf.io.parse_single_example(serialized=record, features=name_to_features)
+      return example
 
     # tf.Example only supports tf.int64, but the TPU only supports tf.int32.
     # So cast all int64 to int32.
-    for name in list(example.keys()):
-      t = example[name]
-      if t.dtype == tf.int64:
-        t = tf.cast(t, tf.int32)
-      example[name] = t
+    #for name in list(example.keys()):
+    #  t = example[name]
+    #  if t.dtype == tf.int64:
+    #    t = tf.cast(t, tf.int32)
+    #  example[name] = t
 
-    return example
 
-  def input_fn():
-    """The actual input function."""
+  d = tf.data.TFRecordDataset(input_file)
+  #if is_training:
+  #    d = d.repeat()
+  #    d = d.shuffle(buffer_size=100)
+  d = d.map(_decode_record)
+  d = d.batch(batch_size=batch_size, drop_remainder=drop_remainder)
+    #d = d.apply(
+    #    tf.data.experimental.map_and_batch(
+    #        lambda record: _decode_record(record, name_to_features),
+    #        batch_size=batch_size,
+    #        drop_remainder=drop_remainder))
 
-    # For training, we want a lot of parallel reading and shuffling.
-    # For eval, we want no shuffling and parallel reading doesn't matter.
-    d = tf.data.TFRecordDataset(input_file)
-    if is_training:
-      d = d.repeat()
-      d = d.shuffle(buffer_size=100)
-
-    d = d.apply(
-        tf.data.experimental.map_and_batch(
-            lambda record: _decode_record(record, name_to_features),
-            batch_size=batch_size,
-            drop_remainder=drop_remainder))
-
-    return d
-
-  return input_fn
+  return d
 
 
 RawResult = collections.namedtuple(
@@ -1163,7 +1156,7 @@ class FeatureWriter(object):
     self.filename = filename
     self.is_training = is_training
     self.num_features = 0
-    self._writer = tf.python_io.TFRecordWriter(filename)
+    self._writer = tf.io.TFRecordWriter(filename)
 
   def process_feature(self, feature):
     """Write a InputFeature to the TFRecordWriter as a tf.train.Example."""
