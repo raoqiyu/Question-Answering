@@ -740,7 +740,7 @@ class TransformerBlock(tf.keras.layers.Layer):
             size_per_head=self.size_per_head,
             attention_probs_dropout_prob=self.attention_probs_dropout_prob,
             initializer_range=self.initializer_range,
-            do_return_2d_tensor=True,
+            do_return_2d_tensor=False,
             name='self_attention')
 
         self.linear_projection_layer = tf.keras.layers.Dense(self.hidden_size,
