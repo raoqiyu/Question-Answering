@@ -1057,12 +1057,12 @@ def compute_predictions(example):
           "end_byte": -1
       },
       "long_answer_score": float(score),
-      "short_answers": [{
+      "short_answer": {
           "start_token": int(short_span.start_token_idx),
           "end_token": int(short_span.end_token_idx),
           "start_byte": -1,
           "end_byte": -1
-      }],
+      },
       "short_answer_score": float(score),
       "yes_no_answer": "NONE",
       "answer_type_logits": summary.answer_type_logits.tolist(),
@@ -1155,13 +1155,34 @@ def create_long_answer(entry):
     answer.append(str(entry["long_answer"]["start_token"]) + ":" + str(entry["long_answer"]["end_token"]))
   return " ".join(answer)
 
+def create_short_answer_v2(entry):
+  answer = ''
+  if entry["short_answer_score"] < 0:
+    if entry['answer_type'] == 0:
+        answer = ''
+    if entry['answer_type'] == 1:
+        answer = 'YES'
+    if entry['answer_type'] == 2:
+        answer = 'NO'
+  elif entry['short_answer']["start_token"] > -1:
+     answer = str(entry['short_answer']["start_token"]) + ":" + str(entry['short_answer']["end_token"])
+  return answer
+
+def create_long_answer_v2(entry):
+    answer = ''
+    if entry["answer_type"] == 0:
+        answer = ''
+    elif entry["long_answer"]["start_token"] > -1:
+        answer = str(entry["long_answer"]["start_token"]) + ":" + str(entry["long_answer"]["end_token"])
+    return answer
+
 def make_submission(prediction_json_fname):
   test_answers_df = pd.read_json(prediction_json_fname)
   for var_name in ['long_answer_score', 'short_answer_score', 'answer_type']:
     test_answers_df[var_name] = test_answers_df['predictions'].apply(lambda q: q[var_name])
 
-  test_answers_df["long_answer"] = test_answers_df["predictions"].apply(create_long_answer)
-  test_answers_df["short_answer"] = test_answers_df["predictions"].apply(create_short_answer)
+  test_answers_df["long_answer"] = test_answers_df["predictions"].apply(create_long_answer_v2)
+  test_answers_df["short_answer"] = test_answers_df["predictions"].apply(create_short_answer_v2)
   test_answers_df["example_id"] = test_answers_df["predictions"].apply(lambda q: str(q["example_id"]))
 
 
