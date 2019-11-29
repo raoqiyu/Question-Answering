@@ -24,15 +24,17 @@ import json
 import os
 import random
 import re
-
+from tqdm import tqdm
 import enum
-from bert import modeling
+from bert import modeling,tokenization
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 
-from absl import logging
 from config import FLAGS
+from qa_utils.logger import logger
+
+
 
 TextSpan = collections.namedtuple("TextSpan", "token_positions text")
 
@@ -97,14 +99,16 @@ def has_long_answer(a):
 
 
 def should_skip_context(e, idx):
-  if (FLAGS.skip_nested_contexts and
-      not e["long_answer_candidates"][idx]["top_level"]):
-    return True
-  elif not get_candidate_text(e, idx).text.strip():
-    # Skip empty contexts.
-    return True
-  else:
-    return False
+    if FLAGS.skip_nested_contexts and not ( (('top_level' in e["long_answer_candidates"][idx]) and
+                                          e["long_answer_candidates"][idx]["top_level"]) or \
+                                        (('topOlevel' in e["long_answer_candidates"][idx]) and \
+                                          e["long_answer_candidates"][idx]["topOlevel"]) ):
+      return True
+    elif not get_candidate_text(e, idx).text.strip():
+      # Skip empty contexts.
+      return True
+    else:
+      return False
 
 
 def get_first_annotation(e):
@@ -179,7 +183,7 @@ def get_candidate_type(e, idx):
   elif first_token in ("<Tr>", "<Li>", "<Dd>", "<Dt>"):
     return "Other"
   else:
-    logging.warning("Unknoww candidate type found: %s", first_token)
+    logger.warning("Unknoww candidate type found: %s", first_token)
     return "Other"
 
 
@@ -221,13 +225,18 @@ def candidates_iter(e):
 
 def create_example_from_jsonl(line):
   """Creates an NQ example from a given line of JSON."""
-  e = json.loads(line, object_pairs_hook=collections.OrderedDict)
+  try:
+    e = json.loads(line, object_pairs_hook=collections.OrderedDict)
+  except Exception as ex:
+    print(line)
+    raise ex
   if "document_title" not in e:
-      e["document_title"] = e["example_id"]
-  document_tokens = e["document_text"].split(" ")
-  e["document_tokens"] = []
-  for token in document_tokens:
-      e["document_tokens"].append({"token":token, "start_byte":-1, "end_byte":-1, "html_token":"<" in token})
+    e["document_title"] = e["example_id"]
+  if "document_tokens" not in e:
+    e["document_tokens"] = []
+    document_tokens = e["document_text"].split(" ")
+    for token in document_tokens:
+      e["document_tokens"].append({"token":token, "start_byte":-1, "end_byte":-1, "html_token":'<' in token})
 
   add_candidate_types_and_positions(e)
   annotation, annotated_idx, annotated_sa = get_first_annotation(e)
@@ -406,7 +415,7 @@ def read_nq_entry(entry, is_training):
       cleaned_answer_text = " ".join(
           tokenization.whitespace_tokenize(answer.text))
       if actual_text.find(cleaned_answer_text) == -1:
-        logging.warning("Could not find answer: '%s' vs. '%s'", actual_text,
+        logger.warning("Could not find answer: '%s' vs. '%s'", actual_text,
                            cleaned_answer_text)
         continue
 
@@ -769,19 +778,19 @@ def read_nq_examples(input_file, is_training):
 
   def _open(path):
     if path.endswith(".gz"):
-      return gzip.GzipFile(fileobj=tf.gfile.Open(path, "r"))
+      return gzip.GzipFile(fileobj=tf.io.gfile.GFile(path, "rb"))
     else:
       return open(path, "r")
 
   for path in input_paths:
-    logging.info("Reading: %s", path)
+    logger.info("Reading: %s", path)
     with _open(path) as input_file:
-      # line_cnt = 0
+      line_cnt = 0
       for line in input_file:
-        input_data.append(create_example_from_jsonl(line))
         # line_cnt += 1
-        # if line_cnt > 3:
-        #     break
+        # if line_cnt < 82746:
+        #   continue
+        input_data.append(create_example_from_jsonl(line))
 
   examples = []
   for entry in input_data:
@@ -956,9 +965,9 @@ class ScoreSummary(object):
 def read_candidates_from_one_split(input_path):
   """Read candidates from a single jsonl file."""
   candidates_dict = {}
-  logging.info("Reading examples from: %s", input_path)
+  logger.info("Reading examples from: %s", input_path)
   if input_path.endswith('gz'):
-    with gzip.GzipFile(fileobj=tf.io.gfile.GFile(input_path)) as input_file:
+    with gzip.GzipFile(fileobj=tf.io.gfile.GFile(input_path,'rb')) as input_file:
       for line in input_file:
         e = json.loads(line)
         candidates_dict[e["example_id"]] = e["long_answer_candidates"]
@@ -1057,13 +1066,13 @@ def compute_predictions(example):
           "end_byte": -1
       },
       "long_answer_score": float(score),
-      "short_answer": {
+      "short_answers": [{
           "start_token": int(short_span.start_token_idx),
           "end_token": int(short_span.end_token_idx),
           "start_byte": -1,
           "end_byte": -1
-      },
-      "short_answer_score": float(score),
+      }],
+      "short_answers_score": float(score),
       "yes_no_answer": "NONE",
       "answer_type_logits": summary.answer_type_logits.tolist(),
       "answer_type": int(np.argmax(summary.answer_type_logits))
@@ -1083,7 +1092,7 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results):
 
   # Join examplew with features and raw results.
   examples = []
-  logging.info('Merging examples')
+  logger.info('Merging examples')
   merged = sorted(examples_by_id + raw_results_by_id + features_by_id)
 
   for idx, data_type, datum in merged:
@@ -1095,14 +1104,14 @@ def compute_pred_dict(candidates_dict, dev_features, raw_results):
       examples[-1].features[idx] = datum
 
   # Construct prediction objects.
-  logging.info("Computing predictions...")
+  logger.info("Computing predictions...")
   nq_pred_dict = {}
   for e in examples:
     summary = compute_predictions(e)
     nq_pred_dict[e.example_id] = summary.predicted_label
     if len(nq_pred_dict) % 100 == 0:
-      logging.info("Examples processed: %d", len(nq_pred_dict))
-  logging.info("Done computing predictions.")
+      logger.info("Examples processed: %d", len(nq_pred_dict))
+  logger.info("Done computing predictions.")
 
   return nq_pred_dict
 
@@ -1157,20 +1166,22 @@ def create_long_answer(entry):
 
 def create_short_answer_v2(entry):
   answer = ''
-  if entry["short_answer_score"] < 0:
+  if entry["short_answers_score"] < FLAGS.short_answer_score_threshold:
     if entry['answer_type'] == 0:
         answer = ''
     if entry['answer_type'] == 1:
         answer = 'YES'
     if entry['answer_type'] == 2:
         answer = 'NO'
-  elif entry['short_answer']["start_token"] > -1:
-     answer = str(entry['short_answer']["start_token"]) + ":" + str(entry['short_answer']["end_token"])
+  else:
+    for short_answer in entry["short_answers"]:
+      if  short_answer["start_token"] > -1:
+        answer = str(short_answer["start_token"]) + ":" + str(short_answer["end_token"])
   return answer
 
 def create_long_answer_v2(entry):
     answer = ''
-    if entry["answer_type"] == 0:
+    if entry["long_answer_score"] < FLAGS.long_answer_score_threshold:
         answer = ''
     elif entry["long_answer"]["start_token"] > -1:
         answer = str(entry["long_answer"]["start_token"]) + ":" + str(entry["long_answer"]["end_token"])
@@ -1178,7 +1189,7 @@ def create_long_answer_v2(entry):
 
 def make_submission(prediction_json_fname):
   test_answers_df = pd.read_json(prediction_json_fname)
-  for var_name in ['long_answer_score', 'short_answer_score', 'answer_type']:
+  for var_name in ['long_answer_score', 'short_answers_score', 'answer_type']:
     test_answers_df[var_name] = test_answers_df['predictions'].apply(lambda q: q[var_name])
 
   test_answers_df["long_answer"] = test_answers_df["predictions"].apply(create_long_answer_v2)

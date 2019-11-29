@@ -4,14 +4,12 @@ import os
 import json
 import pickle
 import numpy as np
-from absl import logging, app
 import tensorflow as tf
+from qa_utils.logger import logger
 
 from bert import tokenization, modeling
 from bert_joint.run_nq import read_nq_examples,convert_examples_to_features,FeatureWriter,\
     input_fn_builder,validate_flags_or_throw,read_candidates,compute_pred_dict,make_submission
-
-logging.set_verbosity(logging.INFO)
 
 
 class QADense(tf.keras.layers.Layer):
@@ -148,10 +146,45 @@ def get_model(transform_variable_names=False):
 
     return qa_model
 
+def process_train_nq_file():
+    logger.info('Process train file %s', FLAGS.train_file)
+    if os.path.exists(FLAGS.train_tfrecord_file):
+        logger.info('train tfrecord file already processed')
+        return FLAGS.train_tfrecord_file
+
+    tokenizer = tokenization.FullTokenizer(
+        vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
+
+    eval_examples = read_nq_examples(
+        input_file=FLAGS.train_file, is_training=True)
+    eval_writer = FeatureWriter(
+        filename=FLAGS.train_tfrecord_file,
+        is_training=True)
+    eval_features = []
+
+    def append_feature(feature):
+        eval_features.append(feature)
+        eval_writer.process_feature(feature)
+
+    logger.info('Process : convert_examples_to_features')
+    num_spans_to_ids = convert_examples_to_features(
+        examples=eval_examples,
+        tokenizer=tokenizer,
+        is_training=True,
+        output_fn=append_feature)
+    eval_writer.close()
+
+    logger.info("  Num orig examples = %d", len(eval_examples))
+    logger.info("  Num split examples = %d", len(eval_features))
+    for spans, ids in num_spans_to_ids.items():
+        logger.info("  Num split into %d = %d", spans, len(ids))
+
+    return eval_writer.filename
+
 def process_test_nq_file():
-    logging.info('Process test file %s', FLAGS.predict_file)
+    logger.info('Process test file %s', FLAGS.predict_file)
     if os.path.exists(FLAGS.predict_tfrecord_file):
-        logging.info('test file already processed')
+        logger.info('test file already processed')
         return FLAGS.predict_tfrecord_file
 
     tokenizer = tokenization.FullTokenizer(
@@ -175,17 +208,17 @@ def process_test_nq_file():
         output_fn=append_feature)
     eval_writer.close()
 
-    logging.info("  Num orig examples = %d", len(eval_examples))
-    logging.info("  Num split examples = %d", len(eval_features))
+    logger.info("  Num orig examples = %d", len(eval_examples))
+    logger.info("  Num split examples = %d", len(eval_features))
     for spans, ids in num_spans_to_ids.items():
-        logging.info("  Num split into %d = %d", spans, len(ids))
+        logger.info("  Num split into %d = %d", spans, len(ids))
 
     return eval_writer.filename
 
 
-def prediction(_):
+def prediction():
     prediction_tfrecord_fname = process_test_nq_file()
-    logging.info('Predict file: %s', prediction_tfrecord_fname)
+    logger.info('Predict file: %s', prediction_tfrecord_fname)
     test_dataset, test_dataset_batch = input_fn_builder(
         input_file=prediction_tfrecord_fname,
         seq_length=FLAGS.max_seq_length,
@@ -196,18 +229,16 @@ def prediction(_):
     # estimator = get_estimator()
     qa_model = get_model(transform_variable_names=False)
 
-    logging.info("***** Running predictions *****")
+    logger.info("***** Running predictions *****")
 
     results = qa_model.predict_generator(test_dataset_batch, verbose=True)
     results = dict(zip(['uniqe_id', 'start_logits', 'end_logits', 'answer_type_logits'], results))
-
-    print(results)
 
     all_results = []
     for result in zip(results['uniqe_id'],results['start_logits'],results['end_logits'],
                       results['answer_type_logits']):
         if len(all_results) % 1000 == 0:
-            logging.info("Processing example: %d" % (len(all_results)))
+            logger.info("Processing example: %d" % (len(all_results)))
         unique_id, start_logits, end_logits, answer_type_logits = result
         all_results.append({
                 'unique_id' : unique_id[0],
@@ -243,6 +274,8 @@ def prediction(_):
     #
     # with open('./eval_features.pkl','rb') as f:
     #     eval_features = pickle.load(f)
+    #
+    # print(all_results)
 
     nq_pred_dict = compute_pred_dict(candidates_dict, eval_features,all_results)
     predictions_json = {"predictions": list(nq_pred_dict.values())}
@@ -250,5 +283,7 @@ def prediction(_):
         json.dump(predictions_json, f, indent=4)
 
     make_submission(FLAGS.output_prediction_file)
+
 if __name__ == '__main__':
-    app.run(prediction)
+    process_train_nq_file()
+    # preasddiction()
