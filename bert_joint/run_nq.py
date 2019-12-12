@@ -228,8 +228,8 @@ def create_example_from_jsonl(line):
   try:
     e = json.loads(line, object_pairs_hook=collections.OrderedDict)
   except Exception as ex:
-    print(line)
-    raise ex
+    print(ex)
+    return None
   if "document_title" not in e:
     e["document_title"] = e["example_id"]
   if "document_tokens" not in e:
@@ -437,7 +437,7 @@ def convert_examples_to_features(examples, tokenizer, is_training, output_fn):
   """Converts a list of NqExamples into InputFeatures."""
   num_spans_to_ids = collections.defaultdict(list)
 
-  for example in examples:
+  for example in tqdm(examples):
     # print('\n\n\n\n',example)
     example_index = example.example_id
     features = convert_single_example(example, tokenizer, is_training)
@@ -771,11 +771,11 @@ class InputFeatures(object):
 
 
 
-def read_nq_examples(input_file, is_training):
+def read_nq_examples(input_file, is_training, sample_begin_idx=50000,n_samples=50000):
   """Read a NQ json file into a list of NqExample."""
   input_paths = tf.io.gfile.glob(input_file)
   input_data = []
-
+  sample_end_idx = sample_begin_idx + n_samples
   def _open(path):
     if path.endswith(".gz"):
       return gzip.GzipFile(fileobj=tf.io.gfile.GFile(path, "rb"))
@@ -785,23 +785,28 @@ def read_nq_examples(input_file, is_training):
   for path in input_paths:
     logger.info("Reading: %s", path)
     with _open(path) as input_file:
-      line_cnt = 0
-      for line in input_file:
-        # line_cnt += 1
-        # if line_cnt < 82746:
-        #   continue
-        input_data.append(create_example_from_jsonl(line))
-
+      line_cnt = -1
+      for line in tqdm(input_file):
+        line_cnt += 1
+        if line_cnt < sample_begin_idx:
+          continue
+        if line_cnt > sample_end_idx:
+            break
+        example = create_example_from_jsonl(line)
+        if example is not None:
+          input_data.append(example)
+  assert line_cnt == sample_end_idx+1
   examples = []
   for entry in input_data:
     examples.extend(read_nq_entry(entry, is_training))
+  logger.info('Processing samples from %d-th to %d-th', sample_begin_idx, sample_end_idx)
   return examples
 
 
 def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
                  use_one_hot_embeddings):
   """Creates a classification model."""
-  model = modeling.BertModel(
+  model = modeling_einsum.BertModel(
       config=bert_config,
       is_training=is_training,
       input_ids=input_ids,
@@ -812,7 +817,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
   # Get the logits for the start and end predictions.
   final_hidden = model.get_sequence_output()
 
-  final_hidden_shape = modeling.get_shape_list(final_hidden, expected_rank=3)
+  final_hidden_shape = modeling_einsum.get_shape_list(final_hidden, expected_rank=3)
   batch_size = final_hidden_shape[0]
   seq_length = final_hidden_shape[1]
   hidden_size = final_hidden_shape[2]
@@ -858,7 +863,7 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
 
 
 def input_fn_builder(input_file, seq_length, is_training, drop_remainder,
-                     batch_size):
+                     batch_size,n_repeats=1):
   """Creates an `input_fn` closure to be passed to TPUEstimator."""
 
   name_to_features = {
@@ -874,18 +879,36 @@ def input_fn_builder(input_file, seq_length, is_training, drop_remainder,
     name_to_features["answer_types"] = tf.io.FixedLenFeature([], tf.int64)
 
   def _decode_record(record, name_to_features=name_to_features):
+
       example = tf.io.parse_single_example(serialized=record, features=name_to_features)
       for name in example.keys():
         t = example[name]
         if name != 'unique_id':  # t.dtype == tf.int64:
           t = tf.cast(t, dtype=tf.int32)
         example[name] = t
-      return example
+
+      if not is_training:
+        return example
+      else:
+        x, y = {}, {}
+        y['tf_op_layer_start_positions']=example['start_positions']
+        y['tf_op_layer_end_positions']=example['end_positions']
+        y['answer_types'] = example['answer_types']
+        y['unique_id'] = example['unique_id']
+
+        x['unique_id'] = example['unique_id']
+        x['input_ids'] = example['input_ids']
+        x['input_mask'] = example['input_mask']
+        x['segment_ids'] = example['segment_ids']
+
+
+        return x,y
 
   data = tf.data.TFRecordDataset(input_file)
 
   if is_training:
-     data = data.repeat()
+     if n_repeats:
+       data = data.repeat(n_repeats)
      data = data.shuffle(buffer_size=100)
 
   data_batch = data.map(_decode_record).batch(batch_size=batch_size,
@@ -1144,6 +1167,51 @@ def validate_flags_or_throw(bert_config):
     raise ValueError(
         "The max_seq_length (%d) must be greater than max_query_length "
         "(%d) + 3" % (FLAGS.max_seq_length, FLAGS.max_query_length))
+
+def make_tfrecords(fname, is_training=True, num_shards=10):
+  tokenizer = tokenization.FullTokenizer(
+    vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
+  num_spans_to_ids = collections.defaultdict(list)
+
+  eval_writers = []
+  for i in range(num_shards):
+    tf_fname = FLAGS.train_tfrecord_file.replace('??','%2d'%i)
+    logger.info(tf_fname)
+    eval_writer = FeatureWriter(filename=tf_fname,is_training=True)
+    eval_writers.append(eval_writer)
+
+  with open(fname,'r') as input_file:
+    line_cnt = -1
+    n_examples,n_features = 0,0
+    for line in tqdm(input_file):
+      line_cnt += 1
+      example_line = create_example_from_jsonl(line)
+      if example_line is None:
+        continue
+      examples = read_nq_entry(example_line, is_training)
+      for example in examples:
+        n_examples += 1
+        example_index = example.example_id
+        features = convert_single_example(example, tokenizer, is_training)
+        num_spans_to_ids[len(features)].append(example.qas_id)
+        for feature in features:
+          n_features += 1
+          feature.example_index = example_index
+          feature.unique_id = feature.example_index + feature.doc_span_index
+          shard_idx = n_features % num_shards
+          try:
+            eval_writers[shard_idx].process_feature(feature)
+          except:
+            logger.info('Processing line:%d example:%d features:%d wrong',line_cnt, n_examples, n_features)
+        del features,  example,
+      del example_line, examples
+
+  logger.info("  Num line examples = %d", line_cnt)
+  logger.info("  Num orig examples = %d", n_examples)
+  logger.info("  Num split examples = %d", n_features)
+  for spans, ids in num_spans_to_ids.items():
+    logger.info("  Num split into %d = %d", spans, len(ids))
+
 
 def create_short_answer(entry):
   # if entry["short_answer_score"] < 1.5:

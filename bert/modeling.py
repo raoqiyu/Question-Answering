@@ -234,8 +234,8 @@ def get_shape_list(tensor, expected_rank=None, name=None):
     be returned as python integers, and dynamic dimensions will be returned
     as tf.Tensor scalars.
   """
-  if name is None:
-    name = tensor.name
+  # if name is None:
+  #   name = tensor.name
 
   if expected_rank is not None:
     assert_rank(tensor, expected_rank, name)
@@ -291,8 +291,8 @@ def assert_rank(tensor, expected_rank, name=None):
   Raises:
     ValueError: If the expected shape doesn't match the actual shape.
   """
-  if name is None:
-    name = tensor.name
+  # if name is None:
+  #   name = tensor.name
 
   expected_rank_dict = {}
   if isinstance(expected_rank, six.integer_types):
@@ -708,7 +708,6 @@ class TransformerBlock(tf.keras.layers.Layer):
     """
 
     def __init__(self,hidden_size=768,
-                    num_hidden_layers=12,
                     num_attention_heads=12,
                     intermediate_size=3072,
                     intermediate_act_fn='gelu',
@@ -719,7 +718,6 @@ class TransformerBlock(tf.keras.layers.Layer):
         super(TransformerBlock, self).__init__(**kwargs)
 
         self.hidden_size = hidden_size
-        self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.intermediate_size = intermediate_size
         self.intermediate_act_fn = get_activation(intermediate_act_fn)
@@ -781,9 +779,17 @@ class TransformerBlock(tf.keras.layers.Layer):
         attention_outputs = self.attention_dropout_layer(attention_outputs)
         attention_outputs = self.attention_norm_layer(input_tensor + attention_outputs)
 
-        intermediate_output = self.intermediate_layer(attention_outputs)
+        attention_outputs_flatten = tf.reshape(attention_outputs, [-1,attention_outputs.shape[-1]])
+        intermediate_output_flatten = self.intermediate_layer(attention_outputs_flatten)
+        # intermediate_output = tf.reshape(intermediate_output_flatten,[-1,attention_outputs.shape[1],
+        #                                                               intermediate_output_flatten.shape[-1]])
+        #
+        # print(attention_outputs,intermediate_output)
 
-        outputs = self.output_layer(intermediate_output)
+        outputs_flatten = self.output_layer(intermediate_output_flatten)
+        outputs = tf.reshape(outputs_flatten, [-1,attention_outputs.shape[1],
+                                                outputs_flatten.shape[-1]])
+
         outputs = self.output_dropout_layer(outputs)
         outputs = self.output_norm_layer(outputs + attention_outputs)
 
@@ -825,7 +831,6 @@ class Transformer(tf.keras.layers.Layer):
         self.layers = []
         for i in range(self.num_hidden_layers):
             self.layers.append(TransformerBlock(hidden_size=self.hidden_size,
-                        num_hidden_layers=self.num_hidden_layers,
                         num_attention_heads=self.num_attention_heads,
                         intermediate_size=self.intermediate_size,
                         intermediate_act_fn = self.intermediate_act_fn,
@@ -892,16 +897,17 @@ class BertModel(tf.keras.layers.Layer):
                                             )
         super(BertModel, self).build(unused_input_shapes)
 
-    def __call__(self,
-                 input_word_ids,
-                 input_mask=None,
-                 input_type_ids=None,
-                 **kwargs):
-        inputs = pack_inputs([input_word_ids, input_mask, input_type_ids])
-        return super(BertModel, self).__call__(inputs, **kwargs)
+    # def __call__(self,
+    #              input_word_ids,
+    #              input_mask=None,
+    #              input_type_ids=None,
+    #              **kwargs):
+    #     inputs = pack_inputs([input_word_ids, input_mask, input_type_ids])
+    #     return super(BertModel, self).__call__(inputs, **kwargs)
 
     def call(self, inputs, mode='bert'):
-        input_word_ids, input_mask, input_type_ids = unpack_inputs(inputs)
+        # input_word_ids, input_mask, input_type_ids = unpack_inputs(inputs)
+        input_word_ids, input_mask, input_type_ids = inputs
 
         word_embeddings = self.embedding_lookup(input_word_ids)
         embedding_tensor =  self.embedding_postprocessor(word_embeddings=word_embeddings,

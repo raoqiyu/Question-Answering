@@ -19,7 +19,8 @@ class QAFlags:
         self.bert_config_file = input_data_path + 'bert-joint-baseline/bert_config.json'
 
         self.train_file = input_data_path + 'tensorflow2-question-answering/simplified-nq-train.jsonl'
-        self.train_tfrecord_file = input_data_path + 'tensorflow2-question-answering/simplified-nq-train.tfrecord'
+        self.train_tfrecord_file = input_data_path + 'tensorflow2-question-answering/simplified-nq-train.tfrecord-0??-010'
+        self.num_shards = 10
 
         self.sample_submission = input_data_path+'tensorflow2-question-answering/sample_submission.csv'
         self.predict_file = input_data_path + 'tensorflow2-question-answering/simplified-nq-test.jsonl'
@@ -35,18 +36,15 @@ class QAFlags:
         self.do_predict =  True
 
         self.raw_init_checkpoint = input_data_path+'bert-joint-baseline/bert_joint.ckpt'
-        self.init_checkpoint = self.output_dir+'bert-joint-baseline/bert_joint.ckpt-1'
+        self.init_checkpoint = self.output_dir+'init/'
+        self.checkpoint_path = self.output_dir+'train/'
 
-        self.train_batch_size = 32
+        self.train_batch_size = 8
         self.predict_batch_size = 32
 
         self.learning_rate = 5e-5
-        self.num_train_epochs = 3.0
-        self.warmup_proportion = 0.1
-        self.save_checkpoints_steps = 1000
-        self.iterations_per_loop = 1000
-        self.train_precomputed_file = None
-        self.train_num_precomputed = None
+        self.num_train_epochs = 10
+        self.train_valid_split_ratio = 0.7
 
         self.vocab_file = input_data_path+'bert-joint-baseline/vocab-nq.txt'
         self.do_lower_case = True
