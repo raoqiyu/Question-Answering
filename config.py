@@ -39,12 +39,12 @@ class QAFlags:
         self.init_checkpoint = self.output_dir+'init/'
         self.checkpoint_path = self.output_dir+'train/'
 
-        self.train_batch_size = 8
+        self.train_batch_size = 4
         self.predict_batch_size = 32
 
         self.learning_rate = 5e-5
         self.num_train_epochs = 10
-        self.train_valid_split_ratio = 0.7
+        self.train_valid_split_ratio = 0.8
 
         self.vocab_file = input_data_path+'bert-joint-baseline/vocab-nq.txt'
         self.do_lower_case = True

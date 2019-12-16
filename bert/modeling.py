@@ -390,7 +390,7 @@ class EmbeddingPostprocessor(tf.keras.layers.Layer):
                     initializer_range=0.02,
                     max_position_embeddings=512,
                     dropout_prob=0.1,
-                    **kwargs,
+                    **kwargs
                 ):
         super(EmbeddingPostprocessor, self).__init__(**kwargs)
 
@@ -920,7 +920,7 @@ class BertModel(tf.keras.layers.Layer):
             return self.encoder(embedding_tensor, attention_mask, do_return_all_layers=True)
 
         sequence_output = self.encoder(embedding_tensor, attention_mask)
-        first_token_tensor = tf.squeeze(sequence_output[:,0:1,:], axis=1)
+        first_token_tensor = sequence_output[:,0,:]
         pooled_output = self.pooler(first_token_tensor)
 
         return (pooled_output, sequence_output)

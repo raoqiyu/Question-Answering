@@ -6,6 +6,7 @@ import pickle
 import numpy as np
 import tensorflow as tf
 from qa_utils.logger import logger
+from tqdm import tqdm
 
 from bert import tokenization, modeling
 from bert_joint.run_nq import AnswerType,read_nq_examples,convert_examples_to_features,FeatureWriter,\
@@ -18,7 +19,7 @@ class QADense(tf.keras.layers.Layer):
                  kernel_initializer=None,
                  bias_initializer="zeros",
                 **kwargs):
-        super().__init__(**kwargs)
+        super(QADense,self).__init__(**kwargs)
         self.output_size = output_size
         self.kernel_initializer = kernel_initializer
         self.bias_initializer = bias_initializer
@@ -35,7 +36,7 @@ class QADense(tf.keras.layers.Layer):
                            "`TDense` should be defined. "
                            "Found `None`.")
         last_dim = tf.compat.dimension_value(input_shape[-1])
-        self.input_spec = tf.keras.layers.InputSpec(min_ndim=3, axes={-1: last_dim})
+        self.input_spec = tf.keras.layers.InputSpec(min_ndim=2, axes={-1: last_dim})
         self.kernel = self.add_weight(
             "kernel",
             shape=[self.output_size,last_dim],
@@ -158,8 +159,7 @@ def get_model(transform_variable_names=False,is_training=False):
             return loss
 
         # Specify the training configuration (optimizer, loss, metrics)
-        qa_model.compile(optimizer=tf.keras.optimizers.RMSprop(),  # Optimizer
-                      metrics=['accuracy','accuracy','accuracy'],
+        qa_model.compile(optimizer=tf.keras.optimizers.RMSprop(learning_rate=FLAGS.learning_rate),  # Optimizer
                       # Loss function to minimize
                       loss={'tf_op_layer_start_positions': compute_loss,
                             'tf_op_layer_end_positions': compute_loss,
@@ -308,18 +308,22 @@ def train():
         input_file=validation_fnames,
         seq_length=FLAGS.max_seq_length,
         is_training=True,
-        n_repeats=None,
+        n_repeats=FLAGS.num_train_epochs,
         drop_remainder=False,
-        batch_size=1)
+        batch_size=FLAGS.train_batch_size)
 
-    valid_data = []
-    for v_data in valid_dataset_batch:
-        valid_data.append(v_data)
-    logger.info('Validation data : %d samples',len(valid_data))
+    # n_training_data,n_training_batch = 0,0
+    # for v_data in tqdm(train_dataset_batch):
+    #     n_training_batch += 1
+    #     n_training_data += v_data[0]['input_ids'].shape[0]
+    # logger.info('Training data : %d samples. %d batch', n_training_data, n_training_batch)
+    #
+    # n_valid_data,n_valid_batch = 0,0
+    # for v_data in valid_dataset_batch:
+    #     n_valid_batch += 1
+    #     n_valid_data += v_data[0]['input_ids'].shape[0]
+    # logger.info('Validation data : %d samples. %d batch', n_valid_data, n_valid_batch)
 
-    # print(next(iter(train_dataset_batch.take(1))))
-
-    # estimator = get_estimator()
     qa_model = get_model(transform_variable_names=True,is_training=True)
     # Create a callback that saves the model's weights every 5 epochs
     cp_callback = tf.keras.callbacks.ModelCheckpoint(
@@ -327,12 +331,12 @@ def train():
         filepath=FLAGS.checkpoint_path,
         verbose=1,
         save_weights_only=True,
-        save_best_only=True,
-        save_freq=5)
+        # save_best_only=True,
+        save_freq=10000)
 
     logger.info("***** Training *****")
-    qa_model.fit_generator(train_dataset_batch,steps_per_epoch=2.5*len(valid_data)//FLAGS.train_batch_size,epochs=100,
-                           validation_data=valid_data,
+    qa_model.fit(x=train_dataset_batch,steps_per_epoch=54577,epochs=100,#11939
+                           validation_data=valid_dataset_batch,validation_steps=13644,
                            verbose=1, callbacks=[cp_callback])
 
 if __name__ == '__main__':
