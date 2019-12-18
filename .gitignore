@@ -1,0 +1,5 @@
+.idea
+Docker
+__pycache__/
+*.tar.gz
+*.txt

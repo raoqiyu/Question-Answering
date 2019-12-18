@@ -42,7 +42,7 @@ class QAFlags:
         self.train_batch_size = 4
         self.predict_batch_size = 32
 
-        self.learning_rate = 5e-5
+        self.learning_rate = 1e-4
         self.num_train_epochs = 10
         self.train_valid_split_ratio = 0.8
 

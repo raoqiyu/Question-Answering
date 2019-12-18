@@ -440,7 +440,7 @@ def convert_examples_to_features(examples, tokenizer, is_training, output_fn):
   for example in tqdm(examples):
     # print('\n\n\n\n',example)
     example_index = example.example_id
-    features = convert_single_example(example, tokenizer, is_training)
+    features = convert_examples_to_features(example, tokenizer, is_training)
     num_spans_to_ids[len(features)].append(example.qas_id)
 
     for feature in features:

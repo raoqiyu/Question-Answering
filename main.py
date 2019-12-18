@@ -164,6 +164,10 @@ def get_model(transform_variable_names=False,is_training=False):
                       loss={'tf_op_layer_start_positions': compute_loss,
                             'tf_op_layer_end_positions': compute_loss,
                             'answer_types': compute_label_loss},
+                         # Loss function to minimize
+                      loss_weights={'tf_op_layer_start_positions': 0.3,
+                            'tf_op_layer_end_positions': 0.3,
+                            'answer_types': 0.4},
                       )
 
 
@@ -341,4 +345,4 @@ def train():
 
 if __name__ == '__main__':
     train()
-    # prediction()
+    prediction()
